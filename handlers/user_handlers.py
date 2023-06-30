@@ -1,164 +1,76 @@
-from copy import deepcopy
-
 from aiogram import Router, F
-from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
-from database.database import user_dict_template, users_db
-from filters.filters import IsDelBookmarkCallbackData, IsDigitCallbackData
-from keyboards.bookmarks_kb import (create_bookmarks_keyboard,
-                                    create_edit_keyboard)
-from keyboards.pagination_kb import create_pagination_keyboard
-from lexicon.lexicon import LEXICON
-from services.file_handling import book
+from aiogram.filters import CommandStart, Command
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-router: Router = Router()
+from database.crud import create_task, get_tasks
+from database.models import Task, SchemaTask
+
+router = Router()
 
 
-# Этот хэндлер будет срабатывать на команду "/start" -
-# добавлять пользователя в базу данных, если его там еще не было
-# и отправлять ему приветственное сообщение
 @router.message(CommandStart())
-async def process_start_command(message: Message):
-    await message.answer(LEXICON['/start'])
-    if message.from_user.id not in users_db:
-        users_db[message.from_user.id] = deepcopy(user_dict_template)
+async def cmd_start(message: Message):
+    await message.answer('Вас приветствует TODO-bot!\nДля получения справки используйте команду /help')
 
 
-# Этот хэндлер будет срабатывать на команду "/help"
-# и отправлять пользователю сообщение со списком доступных команд в боте
-@router.message(Command(commands='help'))
-async def process_help_command(message: Message):
-    await message.answer(LEXICON['/help'])
+@router.message(F.text == '/help')
+async def cmd_help(message: Message):
+    await message.answer('<b>Доступные команды:</b>\n\n'
+                         '/add [текст задачи] - добавление задачи\n'
+                         '/done [индекс задачи] - отметить задачу выполненной\n'
+                         '/list - показать все\n'
+                         '/delete [индекс задачи] удалить по индексу\n')
 
 
-# Этот хэндлер будет срабатывать на команду "/beginning"
-# и отправлять пользователю первую страницу книги с кнопками пагинации
-@router.message(Command(commands='beginning'))
-async def process_beginning_command(message: Message):
-    users_db[message.from_user.id]['page'] = 1
-    text = book[users_db[message.from_user.id]['page']]
-    await message.answer(
-        text=text,
-        reply_markup=create_pagination_keyboard(
-            'backward',
-            f'{users_db[message.from_user.id]["page"]}/{len(book)}',
-            'forward'))
+# ########################################## #
+# ################ TASK #################### #
+# ########################################## #
 
 
-# Этот хэндлер будет срабатывать на команду "/continue"
-# и отправлять пользователю страницу книги, на которой пользователь
-# остановился в процессе взаимодействия с ботом
-@router.message(Command(commands='continue'))
-async def process_continue_command(message: Message):
-    text = book[users_db[message.from_user.id]['page']]
-    await message.answer(
-        text=text,
-        reply_markup=create_pagination_keyboard(
-            'backward',
-            f'{users_db[message.from_user.id]["page"]}/{len(book)}',
-            'forward'))
+@router.message(F.text.startswith('/add '))
+async def add_task(message: Message):
+    task_text = message.text.split('/add')[-1]
+    create_task(task_text, message.from_user.id)
+    await message.answer('Задача добавлена')
 
 
-# Этот хэндлер будет срабатывать на команду "/bookmarks"
-# и отправлять пользователю список сохраненных закладок,
-# если они есть или сообщение о том, что закладок нет
-@router.message(Command(commands='bookmarks'))
-async def process_bookmarks_command(message: Message):
-    if users_db[message.from_user.id]["bookmarks"]:
-        await message.answer(
-            text=LEXICON[message.text],
-            reply_markup=create_bookmarks_keyboard(
-                *users_db[message.from_user.id]["bookmarks"]))
-    else:
-        await message.answer(text=LEXICON['no_bookmarks'])
+@router.message(F.text.startswith('/done'))
+async def done_task(message: Message):
+    await message.answer('Задача отмечена выполненной')
 
 
-# Этот хэндлер будет срабатывать на нажатие инлайн-кнопки "вперед"
-# во время взаимодействия пользователя с сообщением-книгой
-@router.callback_query(F.data == 'forward')
-async def process_forward_press(callback: CallbackQuery):
-    if users_db[callback.from_user.id]['page'] < len(book):
-        users_db[callback.from_user.id]['page'] += 1
-        text = book[users_db[callback.from_user.id]['page']]
-        await callback.message.edit_text(
-            text=text,
-            reply_markup=create_pagination_keyboard(
-                'backward',
-                f'{users_db[callback.from_user.id]["page"]}/{len(book)}',
-                'forward'))
-    await callback.answer()
+@router.message(F.text == '/list')
+async def list_tasks(message: Message):
+    tasks = get_tasks()
+    for task in tasks:
+        delete_button = InlineKeyboardButton(text='Удалить ❌', callback_data=f'delete_task {task.id}')
+        delete_task_kb = InlineKeyboardMarkup(inline_keyboard=[[delete_button]])
+        await message.answer(f'ID: {task.id}\n'
+                             f'TITLE: {task.title}\n'
+                             f'DESCRIPTION: {task.description}\n'
+                             f'STATUS: {task.status}',
+                             reply_markup=delete_task_kb)
 
 
-# Этот хэндлер будет срабатывать на нажатие инлайн-кнопки "назад"
-# во время взаимодействия пользователя с сообщением-книгой
-@router.callback_query(F.data == 'backward')
-async def process_backward_press(callback: CallbackQuery):
-    if users_db[callback.from_user.id]['page'] > 1:
-        users_db[callback.from_user.id]['page'] -= 1
-        text = book[users_db[callback.from_user.id]['page']]
-        await callback.message.edit_text(
-            text=text,
-            reply_markup=create_pagination_keyboard(
-                'backward',
-                f'{users_db[callback.from_user.id]["page"]}/{len(book)}',
-                'forward'))
-    await callback.answer()
+@router.callback_query(F.data.startswith('delete_task'))
+async def delete_task_button_press(callback: CallbackQuery):
+    task_id = callback.data.split(' ')[-1]
+    print(task_id)
+    await callback.message.answer(callback.message.text)
 
 
-# Этот хэндлер будет срабатывать на нажатие инлайн-кнопки
-# с номером текущей страницы и добавлять текущую страницу в закладки
-@router.callback_query(lambda x: '/' in x.data and x.data.replace('/', '').isdigit())
-async def process_page_press(callback: CallbackQuery):
-    users_db[callback.from_user.id]['bookmarks'].add(
-        users_db[callback.from_user.id]['page'])
-    await callback.answer('Страница добавлена в закладки!')
+@router.message(F.text.startswith('/delete'))
+async def delete_task(message: Message):
+    await message.answer('Задача удалена')
 
 
-# Этот хэндлер будет срабатывать на нажатие инлайн-кнопки
-# с закладкой из списка закладок
-@router.callback_query(IsDigitCallbackData())
-async def process_bookmark_press(callback: CallbackQuery):
-    text = book[int(callback.data)]
-    users_db[callback.from_user.id]['page'] = int(callback.data)
-    await callback.message.edit_text(
-        text=text,
-        reply_markup=create_pagination_keyboard(
-            'backward',
-            f'{users_db[callback.from_user.id]["page"]}/{len(book)}',
-            'forward'))
-    await callback.answer()
+# ################ END #########################
+@router.message(F.text == '/add')
+async def incorrect_add(message: Message):
+    await message.answer('<b> ERROR </b>\n'
+                         'Эта команда требует данные для обработки')
 
 
-# Этот хэндлер будет срабатывать на нажатие инлайн-кнопки
-# "редактировать" под списком закладок
-@router.callback_query(F.data == 'edit_bookmarks')
-async def process_edit_press(callback: CallbackQuery):
-    await callback.message.edit_text(
-        text=LEXICON[callback.data],
-        reply_markup=create_edit_keyboard(
-            *users_db[callback.from_user.id]["bookmarks"]))
-    await callback.answer()
-
-
-# Этот хэндлер будет срабатывать на нажатие инлайн-кнопки
-# "отменить" во время работы со списком закладок (просмотр и редактирование)
-@router.callback_query(F.data == 'cancel')
-async def process_cancel_press(callback: CallbackQuery):
-    await callback.message.edit_text(text=LEXICON['cancel_text'])
-    await callback.answer()
-
-
-# Этот хэндлер будет срабатывать на нажатие инлайн-кнопки
-# с закладкой из списка закладок к удалению
-@router.callback_query(IsDelBookmarkCallbackData())
-async def process_del_bookmark_press(callback: CallbackQuery):
-    users_db[callback.from_user.id]['bookmarks'].remove(
-        int(callback.data[:-3]))
-    if users_db[callback.from_user.id]['bookmarks']:
-        await callback.message.edit_text(
-            text=LEXICON['/bookmarks'],
-            reply_markup=create_edit_keyboard(
-                *users_db[callback.from_user.id]["bookmarks"]))
-    else:
-        await callback.message.edit_text(text=LEXICON['no_bookmarks'])
-    await callback.answer()
+@router.message()
+async def i_dont_know(message: Message):
+    await message.answer('<b>Такой команды пока нет =(</b>')
