@@ -1,4 +1,4 @@
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.orm import Session
 
 from database.database import engine
@@ -18,7 +18,7 @@ def create_task(task_text, telegram_id):
         db.commit()
 
 
-def get_tasks(telegram_id):
+def get_tasks_by_id(telegram_id):
     """Возвращает все задачи текущего пользователя"""
     session = Session(engine)
     stmt = select(Task).where(Task.telegram_id == telegram_id)
@@ -32,4 +32,10 @@ def delete_task_by_id(task_id, telegram_id):
     session.execute(stmt)
     session.commit()
 
+
+def done_task_by_id(task_id, telegram_id):
+    session = Session(engine)
+    stmt = update(Task).where(Task.telegram_id == telegram_id, Task.id == task_id).values(status=True)
+    session.execute(stmt)
+    session.commit()
 

@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-from database.crud import create_task, get_tasks, delete_task_by_id
+from database.crud import create_task, get_tasks_by_id, delete_task_by_id, done_task_by_id
 from database.models import Task, SchemaTask
 
 router = Router()
@@ -37,19 +37,22 @@ async def add_task(message: Message):
     await message.answer('Задача добавлена')
 
 
-@router.message(F.text.startswith('/done'))
+@router.message(F.text.startswith('/done '))
 async def done_task(message: Message):
     """ /done - Маркировка задачи как выполненная """
+    task_id = message.text.split(' ')[-1]
+    done_task_by_id(task_id, message.from_user.id)
     await message.answer('Задача отмечена выполненной')
 
 
 @router.message(F.text == '/list')
 async def list_tasks(message: Message):
     """ /list - Получение списка всех задач """
-    tasks = get_tasks(message.from_user.id)
+    tasks = get_tasks_by_id(message.from_user.id)
     for task in tasks:
         delete_button = InlineKeyboardButton(text='Удалить ❌', callback_data=f'delete_task {task.id}')
-        delete_task_kb = InlineKeyboardMarkup(inline_keyboard=[[delete_button]])
+        done_button = InlineKeyboardButton(text='Выполнено', callback_data=f'done_task {task.id}')
+        delete_task_kb = InlineKeyboardMarkup(inline_keyboard=[[delete_button, done_button]])
         await message.answer(f'ID: {task.id}\n'
                              f'TITLE: {task.title}\n'
                              f'DESCRIPTION: {task.description}\n'
@@ -63,6 +66,14 @@ async def delete_task_button_press(callback: CallbackQuery):
     task_id = callback.data.split(' ')[-1]
     delete_task_by_id(task_id, callback.from_user.id)
     await callback.message.edit_text(f'Задача [{task_id}] удалена')
+
+
+@router.callback_query(F.data.startswith('done_task'))
+async def delete_task_button_press(callback: CallbackQuery):
+    """ Удаление задачи кнопкой """
+    task_id = callback.data.split(' ')[-1]
+    done_task_by_id(task_id, callback.from_user.id)
+    await callback.message.edit_text(f'{callback.message.text}\nЗадача [{task_id}] Выполнена')
 
 
 @router.message(F.text.startswith('/delete '))
